@@ -1,0 +1,180 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>接口延迟告警 · 规则换版台</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}" />
+</head>
+<body>
+<header class="topbar">
+  <div class="brand">
+    <span class="dot" id="live-dot"></span>
+    <h1>接口延迟告警 · 规则换版台</h1>
+  </div>
+  <div class="topstatus" id="topstatus">连接中…</div>
+</header>
+
+<main class="grid">
+  <!-- 1. Live state -->
+  <section class="card span-2" id="overview">
+    <div class="card-head">
+      <h2>当前生效规则</h2>
+      <span class="muted" id="server-time"></span>
+    </div>
+    <div class="status-row">
+      <div class="stat">
+        <span class="label">规则版本</span>
+        <strong id="st-version">—</strong>
+      </div>
+      <div class="stat">
+        <span class="label">毫秒阈值</span>
+        <strong id="st-threshold">—</strong>
+      </div>
+      <div class="stat">
+        <span class="label">连续超限次数</span>
+        <strong id="st-consecutive-req">—</strong>
+      </div>
+      <div class="stat">
+        <span class="label">连续超限计数</span>
+        <strong id="st-consecutive">—</strong>
+      </div>
+      <div class="stat wide">
+        <span class="label">告警状态</span>
+        <strong id="st-alert" class="pill">—</strong>
+      </div>
+    </div>
+    <div class="progressline">
+      <div class="progress"><div id="breach-progress"></div></div>
+      <span class="muted" id="breach-progress-label"></span>
+    </div>
+    <div class="footrow muted">
+      <span>样本 <b id="st-samples">0</b> / 保留 <b id="st-retention">100000</b></span>
+      <span>已发告警记录 <b id="st-events">0</b></span>
+      <span>断连恢复次数 <b id="st-episodes">0</b></span>
+      <span>最新样本 ID <b id="st-last-sample">—</b></span>
+    </div>
+  </section>
+
+  <!-- 2. Ingest -->
+  <section class="card">
+    <div class="card-head"><h2>上报探测耗时</h2></div>
+    <form id="ingest-form" class="stack">
+      <label class="field">
+        <span>本次耗时 (ms)</span>
+        <input id="duration" name="duration" type="number" min="0" step="0.1" value="120" required />
+      </label>
+      <div class="btnrow">
+        <button type="submit" class="primary">上报一条</button>
+        <button type="button" id="burst" class="ghost" title="120/450/820/900/300 循环 6 轮">灌入演示流量</button>
+      </div>
+    </form>
+    <form id="seq-form" class="stack tight">
+      <label class="field">
+        <span>批量序列（逗号分隔）</span>
+        <input id="seq" type="text" value="120,480,760,810,90" />
+      </label>
+      <button type="submit" class="ghost">批量上报</button>
+    </form>
+    <p class="hint">阈值比较为严格大于；单条未超限立即恢复。</p>
+  </section>
+
+  <!-- 3. Trial -->
+  <section class="card span-2" id="trial-card">
+    <div class="card-head">
+      <h2>试算新规则（暂扣，不对外告警）</h2>
+      <span class="tag" id="trial-badge" hidden>试算中</span>
+    </div>
+    <form id="trial-form" class="inline-form">
+      <label class="field">
+        <span>毫秒阈值</span>
+        <input id="trial-threshold" type="number" min="0.001" step="0.1" value="800" required />
+      </label>
+      <label class="field">
+        <span>连续超限次数</span>
+        <input id="trial-consecutive" type="number" min="1" max="1000" step="1" value="2" required />
+      </label>
+      <button type="submit" class="primary" id="trial-create">试算并暂扣</button>
+      <button type="button" class="danger" id="trial-cancel" hidden>取消试算</button>
+      <button type="button" class="go" id="trial-activate" hidden>启用新规则</button>
+    </form>
+    <div id="trial-empty" class="empty muted">尚未试算。试算会回放当前保留的样本，结果只暂扣在这里，不影响正在运行的规则。</div>
+    <div id="trial-body" hidden>
+      <div class="status-row compact">
+        <div class="stat"><span class="label">待启用版本</span><strong id="tr-version">—</strong></div>
+        <div class="stat"><span class="label">回放样本</span><strong id="tr-samples">—</strong></div>
+        <div class="stat"><span class="label">预计告警</span><strong id="tr-alerts">—</strong></div>
+        <div class="stat"><span class="label">预计恢复</span><strong id="tr-recoveries">—</strong></div>
+        <div class="stat"><span class="label">回放末态</span><strong id="tr-endstate">—</strong></div>
+        <div class="stat"><span class="label">启用后新增样本</span><strong id="tr-shadow">—</strong></div>
+      </div>
+      <div class="two-col">
+        <div>
+          <h3>暂扣的试算事件</h3>
+          <div class="table-wrap small"><table id="trial-events"><thead><tr><th>类型</th><th>样本ID</th><th>耗时</th><th>连续</th><th>来源</th></tr></thead><tbody></tbody></table></div>
+        </div>
+        <div>
+          <h3>换版说明</h3>
+          <ul class="rules-note">
+            <li>试算回放只读历史样本，不产生对外告警。</li>
+            <li>试算期间仍可继续上报，旧规则照常告警，新规则在后台同步计算。</li>
+            <li>启用时直接接管最新样本状态，<b>不重扫历史</b>：启用前后都在告警则沿用原告警，状态变化才补记一条告警/恢复。</li>
+          </ul>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- 4. Events -->
+  <section class="card span-2">
+    <div class="card-head">
+      <h2>已发告警 / 恢复记录</h2>
+      <div class="filters">
+        <select id="event-kind">
+          <option value="">全部</option>
+          <option value="alert">告警</option>
+          <option value="recovery">恢复</option>
+        </select>
+        <button class="ghost" id="events-refresh">刷新</button>
+      </div>
+    </div>
+    <div class="table-wrap"><table id="events-table">
+      <thead><tr><th>#</th><th>类型</th><th>规则版本</th><th>时间</th><th>耗时 ms</th><th>阈值 ms</th><th>连续</th><th>原因</th><th>断连#</th></tr></thead>
+      <tbody></tbody>
+    </table></div>
+    <div class="pager">
+      <button class="ghost" id="prev-page">上一页</button>
+      <span class="muted" id="page-label">—</span>
+      <button class="ghost" id="next-page">下一页</button>
+    </div>
+  </section>
+
+  <!-- 5. History -->
+  <section class="card">
+    <div class="card-head"><h2>规则版本历史</h2></div>
+    <div class="table-wrap small"><table id="rules-table">
+      <thead><tr><th>版本</th><th>阈值</th><th>连续</th><th>状态</th><th>创建</th></tr></thead>
+      <tbody></tbody>
+    </table></div>
+  </section>
+
+  <!-- 6. Recent samples -->
+  <section class="card">
+    <div class="card-head"><h2>最近样本</h2></div>
+    <div class="table-wrap small"><table id="samples-table">
+      <thead><tr><th>ID</th><th>耗时 ms</th><th>时间</th></tr></thead>
+      <tbody></tbody>
+    </table></div>
+  </section>
+</main>
+
+<footer class="footer">
+  <span class="muted">Flask + SQLite · 保留最近 10 万条样本 · </span>
+  <button class="linkish" id="demo-reset">清空演示数据</button>
+</footer>
+
+<div id="toast" class="toast" hidden></div>
+
+<script src="{{ url_for('static', filename='app.js') }}"></script>
+</body>
+</html>
